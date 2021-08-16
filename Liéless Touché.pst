@@ -1,0 +1,217 @@
+//
+//
+//  _      _   __ _                 _______               _       __ 
+// | |    (_) /_/| |               |__   __|             | |     /_/ 
+// | |     _  ___| | ___  ___ ___     | | ___  _   _  ___| |__   ___ 
+// | |    | |/ _ \ |/ _ \/ __/ __|    | |/ _ \| | | |/ __| '_ \ / _ \
+// | |____| |  __/ |  __/\__ \__ \    | | (_) | |_| | (__| | | |  __/
+// |______|_|\___|_|\___||___/___/    |_|\___/ \__,_|\___|_| |_|\___|
+//                                                                   
+//                                                               v1.0
+//                                                 by Studio Delfuego 
+//                                                                   
+//
+// This plugin allows you to easily use your Touché controller in Logic Pro X without having to use Lié,
+// and hook movements in all 4 directions up to an infinite number of MIDI CC's and plugin parameters.
+// There is currently no support to change the range or response curve of the target parameters.
+// If you want these features, please create a feature request on GitHub.
+//
+//
+// Installation
+// ------------
+// In Logic Pro X, create a Software Instrument track or External Midi track using the External Instrument plugin,
+// or use an existing one if you want to add Touché control to its plugin parameters or MIDI CCs.
+// In the track's Channel Strip, add a Scripter plugin to the MIDI FX (above the Audio FX, below the EQ).
+// In the Scripter plugin settings, click Open Script in Editor and copy/paste the contents of this file.
+// Above the pasted script, click 'Run Script'. The plugin settings now change to show 4 Input CC's (down, up, left, right)
+// and 4 targets per input direction.
+//
+// NB: Make sure an instrument is selected in the channel strip. Software Instrument tracks without a selected 
+// instrument don't receive MIDI events.
+//
+//
+// Input setup
+// -----------
+// Touché's default Input CC's are 16, 17, 18 and 19 and should be configured by default.
+// If you've set up your Touché to send different MIDI CCs, you can manually set 
+// the proper Input CC's for each direction.
+//
+//
+// Target setup
+// ------------
+// Now you can assign up to 4 targets per direction. If you use the 'Learn Plug-in Parameter' option and touch any
+// parameter in a plug-in on the same channel strip, the Touché will now be controlling that parameter.
+// Plugins *must* be on the same channel strip as this plugin, so add this MIDI FX plugin to every track
+// that you want Touché to control parameters on.
+//
+// If you need more than 4 targets for 1 Touché direction, change the N_TARGETS variable in the Script Editor.
+// The maximum amount possible is determined by your computer's processing power.
+// For reference; using all 16 targets on Plug-in Parameters works smoothly on a 2019 16" MacBook Pro with 32GB of RAM.
+//
+// 
+// Any questions, remarks, issues, bug reports and feature requests are welcome on the GitHub page!
+//
+//
+// License
+// ------------
+// This code is licensed under the GNU General Public License v3.0.
+// That means you are free to use and modify this plugin for both personal and commercial use.
+//
+// If you want to make this plugin available commercially or as part of 
+// a commercial product, license conditions apply. More info:
+// https://choosealicense.com/licenses/gpl-3.0/
+// 
+
+
+//////////////////////////////////////////
+//
+// CONFIG
+//
+//////////////////////////////////////////
+
+var N_TARGETS = 4;
+var HIDE_INPUT_CC = false;
+
+
+
+//////////////////////////////////////////
+//
+// CONSTANTS
+//
+//////////////////////////////////////////
+
+const SYMBOLS = {
+	down:"⬇",
+	up:"⬆",
+	left:"←",
+	right: "→",
+	label_passthrough: "Input passthrough",
+};
+
+
+
+//////////////////////////////////////////
+//
+// PREPARATION
+//
+//////////////////////////////////////////
+
+// get CC names from CC #0 to CC#127 and store in array
+var INPUT_MENU_NAMES = MIDI._ccNames.slice();
+
+// add CC numbers in front of names
+for (var i = 0; i < 128; i++ ) 
+{
+		INPUT_MENU_NAMES[i] = "CC " + i + " - " +  INPUT_MENU_NAMES[i];
+}
+
+// add OFF to the menu
+INPUT_MENU_NAMES.unshift("-- OFF --");
+
+
+
+//////////////////////////////////////////
+//
+// UTILS
+//
+//////////////////////////////////////////
+
+function menuIndexForCC(cc) {
+	return cc + 1;
+}
+
+function ccForMenuIndex(i) {
+	return i - 1;
+}
+
+function ScaleValue (inputValue, inputMin, inputMax, outputMin, outputMax) {
+	return (((outputMax - outputMin) * (inputValue - inputMin)) / (inputMax - inputMin)) + outputMin;
+}
+
+
+
+//////////////////////////////////////////
+//
+// RUNTIME VARIABLES
+//
+//////////////////////////////////////////
+
+var CC_DOWN = -1;
+var CC_UP = -1;
+var CC_LEFT = -1;
+var CC_RIGHT = -1;
+
+
+
+//////////////////////////////////////////
+//
+// UI
+//
+//////////////////////////////////////////
+
+// var PluginParameters = [{name: SYMBOLS.label_passthrough, type: "checkbox", defaultValue: 1, disableAutomation: true}] ;
+var PluginParameters = [] ;
+CreateInputGroup("Down", SYMBOLS.down, 16);
+CreateInputGroup("Up", SYMBOLS.up, 17);
+CreateInputGroup("Left", SYMBOLS.left, 18);
+CreateInputGroup("Right", SYMBOLS.right, 19);
+
+function CreateInputGroup(label, symbol, ccDefault){
+   PluginParameters.push({name: symbol + " " + label, type:"text"});
+	PluginParameters.push({name:"Input for " + symbol, type:"menu", valueStrings: INPUT_MENU_NAMES, defaultValue: menuIndexForCC(ccDefault), hidden: HIDE_INPUT_CC, disableAutomation: true });
+	for(var i = 0; i < N_TARGETS; i++)
+	{
+		PluginParameters.push({name:"Target " + (i+1) + " for " + symbol, type:"target", defaultValue: 0, disableAutomation: true});
+	}
+}
+
+
+
+//////////////////////////////////////////
+//
+// Implementation
+//
+//////////////////////////////////////////
+
+function ParameterChanged(param, value) {
+	// We ignore the passed data and just reload everything for cleaner code
+	CC_DOWN = ccForMenuIndex(GetParameter("Input for " + SYMBOLS.down));
+	CC_UP = ccForMenuIndex(GetParameter("Input for " + SYMBOLS.up));
+	CC_LEFT = ccForMenuIndex(GetParameter("Input for " + SYMBOLS.left));
+	CC_RIGHT = ccForMenuIndex(GetParameter("Input for " + SYMBOLS.right));
+}
+
+function HandleMIDI (event){
+	
+	// pass-through TODO make configurable
+	event.send();
+
+	// send to targets of appropriate direction
+	if(event.number == CC_DOWN)
+	{
+		SendValueToAllTargets(event.value, SYMBOLS.down);
+	}
+	else if(event.number == CC_UP)
+	{
+		SendValueToAllTargets(event.value, SYMBOLS.up);
+	}
+	else if(event.number == CC_LEFT)
+	{
+		SendValueToAllTargets(event.value, SYMBOLS.left);
+	}
+	else if(event.number == CC_RIGHT)
+	{
+		SendValueToAllTargets(event.value, SYMBOLS.right);
+	}
+}
+
+function SendValueToAllTargets(value, symbol){
+
+	var scaledValue = ScaleValue(value, 0, 127, 0, 1);
+	for (var i = 1; i <= N_TARGETS; i++){
+		var event = new TargetEvent();
+		event.target = "Target " + i + " for " + symbol;
+		event.value = scaledValue;
+		event.send();
+	}
+}
